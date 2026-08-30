@@ -1,0 +1,14 @@
+# Install a platform-appropriate PyTorch build if CUDA support is needed.
+torch==1.12.1
+torchvision==0.13.1
+gym==0.15.7
+numpy==1.23.1
+pybullet==3.2.6
+scipy==1.10.1
+matplotlib==3.7.5
+pandas==2.0.3
+Pillow==10.4.0
+imageio==2.35.1
+cmake
+Cython
+pytest>=8.3,<9

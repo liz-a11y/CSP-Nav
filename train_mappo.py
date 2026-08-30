@@ -1,5 +1,6 @@
 import argparse
 import csv
+import importlib
 import os
 import shutil
 import time
@@ -8,12 +9,32 @@ from collections import deque
 import numpy as np
 import torch
 
-from crowd_nav.configs.config_mappo import Config
 from crowd_sim import *  # noqa: F401,F403 - imports Gym registrations
 from training.algo.mappo import MAPPO
 from training.networks.mappo_policy import MAPPOPolicy
 from training.networks.mappo_storage import MAPPORolloutStorage
 from training.networks.multi_agent_envs import make_multi_agent_vec_envs
+
+
+DEFAULT_CONFIG_MODULE = "crowd_nav.configs.config_mappo"
+
+
+def load_config_module(module_name):
+    try:
+        module = importlib.import_module(module_name)
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "Private training configuration is not included. Place config.py "
+            "and config_mappo.py under crowd_nav/configs, or provide an "
+            "importable module with --config-module."
+        ) from exc
+    if not hasattr(module, "Config"):
+        raise AttributeError(
+            "Configuration module {!r} does not define Config".format(
+                module_name
+            )
+        )
+    return module
 
 
 class EpisodeRewardTracker:
@@ -282,12 +303,15 @@ def append_progress_row(path, row):
         writer.writerow(row)
 
 
-def save_training_configs(output_dir):
+def save_training_configs(output_dir, config_module):
     config_dir = os.path.join(output_dir, "configs")
     os.makedirs(config_dir, exist_ok=True)
-    source_dir = os.path.join(os.path.dirname(__file__), "crowd_nav", "configs")
-    for name in ("config.py", "config_mappo.py"):
-        shutil.copy2(os.path.join(source_dir, name), config_dir)
+    module_path = os.path.abspath(config_module.__file__)
+    source_dir = os.path.dirname(module_path)
+    base_path = os.path.join(source_dir, "config.py")
+    if os.path.isfile(base_path):
+        shutil.copy2(base_path, os.path.join(config_dir, "config.py"))
+    shutil.copy2(module_path, os.path.join(config_dir, "config_mappo.py"))
 
 
 def build_checkpoint(
@@ -325,6 +349,11 @@ def config_snapshot(config):
 
 def parse_args():
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--config-module",
+        default=DEFAULT_CONFIG_MODULE,
+        help="Import path for the private module that defines Config.",
+    )
     parser.add_argument("--updates", type=int, default=None)
     parser.add_argument("--num-processes", type=int, default=None)
     parser.add_argument("--num-steps", type=int, default=None)
@@ -338,7 +367,10 @@ def parse_args():
 
 def train(args=None):
     args = parse_args() if args is None else args
-    config = Config()
+    config_module = load_config_module(
+        getattr(args, "config_module", DEFAULT_CONFIG_MODULE)
+    )
+    config = config_module.Config()
     if args.smoke:
         config.training.num_processes = 1
         config.ppo.num_steps = 8
@@ -424,7 +456,7 @@ def train(args=None):
         default_updates,
     )
     os.makedirs(config.training.output_dir, exist_ok=True)
-    save_training_configs(config.training.output_dir)
+    save_training_configs(config.training.output_dir, config_module)
     checkpoint_dir = os.path.join(config.training.output_dir, "checkpoints")
     os.makedirs(checkpoint_dir, exist_ok=True)
     progress_path = os.path.join(config.training.output_dir, "progress.csv")
